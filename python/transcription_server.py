@@ -61,38 +61,50 @@ class TranscriptionServer:
     
     def run(self):
         """Main server loop - read commands from stdin."""
-        logging.info("Transcription server started")
+        logging.info("Transcription server started and listening for commands")
         
         for line in sys.stdin:
             try:
+                logging.info(f"Received command: {line.strip()}")
                 command = json.loads(line.strip())
+                action = command.get("action")
+                logging.info(f"Processing action: {action}")
                 
-                if command.get("action") == "transcribe":
+                if action == "transcribe":
                     audio_path = command.get("audio_path")
                     if not audio_path:
+                        logging.error("Transcribe command missing audio_path parameter")
                         response = {"error": "Missing audio_path parameter"}
                     else:
+                        logging.info(f"Starting transcription for: {audio_path}")
                         response = self.transcribe(audio_path)
+                        logging.info(f"Transcription completed with response: {response}")
                 
-                elif command.get("action") == "ping":
+                elif action == "ping":
+                    logging.info("Ping command received")
                     response = {"success": True, "message": "pong"}
                 
-                elif command.get("action") == "quit":
+                elif action == "quit":
+                    logging.info("Quit command received")
                     response = {"success": True, "message": "Shutting down"}
                     print(json.dumps(response))
                     break
                 
                 else:
-                    response = {"error": f"Unknown action: {command.get('action')}"}
+                    logging.warning(f"Unknown action received: {action}")
+                    response = {"error": f"Unknown action: {action}"}
                 
+                logging.info(f"Sending response: {response}")
                 print(json.dumps(response))
                 sys.stdout.flush()
                 
             except json.JSONDecodeError as e:
+                logging.error(f"JSON decode error: {str(e)}")
                 error_response = {"error": f"Invalid JSON: {str(e)}"}
                 print(json.dumps(error_response))
                 sys.stdout.flush()
             except Exception as e:
+                logging.error(f"Unexpected server error: {str(e)}")
                 error_response = {"error": f"Server error: {str(e)}"}
                 print(json.dumps(error_response))
                 sys.stdout.flush()

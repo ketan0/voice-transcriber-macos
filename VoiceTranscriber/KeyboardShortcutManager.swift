@@ -7,16 +7,23 @@ class KeyboardShortcutManager: ObservableObject {
     
     var onShortcutPressed: (() -> Void)?
     
-    // Default to Fn key
-    private let targetKeyCode: CGKeyCode = 63 // kVK_Function
+    // Target modifier combination: Ctrl+Alt+Cmd+Shift
+    private let targetModifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
+    
+    // Debouncing to prevent rapid-fire triggering
+    private var lastTriggerTime: TimeInterval = 0
+    private let debounceInterval: TimeInterval = 0.5 // 500ms
     
     init() {
+        Logger.shared.info("KeyboardShortcutManager: Initializing")
         setupGlobalKeyListener()
     }
     
     private func setupGlobalKeyListener() {
+        Logger.shared.info("KeyboardShortcutManager: Setting up global key listener")
         // Check accessibility permissions
         guard AXIsProcessTrusted() else {
+            Logger.shared.warn("KeyboardShortcutManager: Accessibility permissions not granted")
             requestAccessibilityPermissions()
             return
         }
@@ -37,15 +44,16 @@ class KeyboardShortcutManager: ObservableObject {
         )
         
         guard let eventTap = eventTap else {
-            print("Failed to create event tap")
+            Logger.shared.error("KeyboardShortcutManager: Failed to create event tap")
             return
         }
         
+        Logger.shared.info("KeyboardShortcutManager: Event tap created successfully")
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
         
-        print("Global key listener setup complete")
+        Logger.shared.info("KeyboardShortcutManager: Global key listener setup complete")
     }
     
     private func requestAccessibilityPermissions() {
@@ -58,13 +66,24 @@ class KeyboardShortcutManager: ObservableObject {
     }
     
     private func handleKeyEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        // Check for our target modifier combination
+        let eventFlags = event.flags
         
-        // Check if it's our target key (Fn key)
-        if keyCode == targetKeyCode {
+        // Check if all four target modifiers are pressed
+        if eventFlags.contains(targetModifiers) {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            Logger.shared.info("KeyboardShortcutManager: All modifiers (Ctrl+Alt+Cmd+Shift) detected with key \(keyCode), type: \(type.rawValue)")
+            
             if type == .keyDown {
-                // Fn key pressed
-                onShortcutPressed?()
+                // Debounce to prevent rapid-fire triggering
+                let currentTime = Date().timeIntervalSince1970
+                if currentTime - lastTriggerTime > debounceInterval {
+                    Logger.shared.info("KeyboardShortcutManager: Modifier combination pressed - triggering shortcut")
+                    lastTriggerTime = currentTime
+                    onShortcutPressed?()
+                } else {
+                    Logger.shared.info("KeyboardShortcutManager: Modifier combination ignored (debounced)")
+                }
             }
             // Let the event continue (don't consume it)
             return Unmanaged.passUnretained(event)

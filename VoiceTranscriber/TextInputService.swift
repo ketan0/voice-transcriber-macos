@@ -17,30 +17,84 @@ class TextInputService {
     }
     
     func insertText(_ text: String) {
+        Logger.shared.info("TextInputService: insertText called with text: '\(text)'")
         guard AXIsProcessTrusted() else {
-            print("Cannot insert text: Accessibility permissions not granted")
+            Logger.shared.error("TextInputService: Cannot insert text - Accessibility permissions not granted")
             return
         }
         
         // Get the currently focused application
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-            print("No frontmost application found")
+            Logger.shared.error("TextInputService: No frontmost application found")
             return
         }
         
-        print("Inserting text into: \(frontmostApp.localizedName ?? "Unknown")")
+        Logger.shared.info("TextInputService: Inserting text into: \(frontmostApp.localizedName ?? "Unknown")")
         
-        // Try multiple methods to insert text
-        if !insertTextViaAccessibility(text) {
+        // Try smart insertion methods in order of reliability
+        Logger.shared.info("TextInputService: Attempting insertion via pasteboard (Cmd+V)")
+        if insertTextViaPasteboard(text) {
+            Logger.shared.info("TextInputService: Text inserted successfully via pasteboard")
+        } else {
+            Logger.shared.info("TextInputService: Pasteboard failed, trying key events")
             insertTextViaKeyEvents(text)
         }
+    }
+    
+    private func insertTextViaPasteboard(_ text: String) -> Bool {
+        Logger.shared.info("TextInputService: Using pasteboard method")
+        
+        // Save current clipboard contents
+        let pasteboard = NSPasteboard.general
+        let savedClipboardItems = pasteboard.pasteboardItems
+        
+        // Clear pasteboard and set our text
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        
+        // Small delay to ensure pasteboard is updated
+        usleep(10_000) // 10ms
+        
+        // Simulate Cmd+V
+        let success = simulateCommandV()
+        
+        // Restore original clipboard after a short delay
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            pasteboard.clearContents()
+            if let savedItems = savedClipboardItems {
+                pasteboard.writeObjects(savedItems)
+            }
+        }
+        
+        return success
+    }
+    
+    private func simulateCommandV() -> Bool {
+        // Create Cmd+V key event
+        guard let keyDownEvent = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: true),
+              let keyUpEvent = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: false) else {
+            Logger.shared.error("TextInputService: Failed to create Cmd+V events")
+            return false
+        }
+        
+        // Set command modifier
+        keyDownEvent.flags = .maskCommand
+        keyUpEvent.flags = .maskCommand
+        
+        // Post the events
+        keyDownEvent.post(tap: .cghidEventTap)
+        usleep(10_000) // 10ms delay between key down and up
+        keyUpEvent.post(tap: .cghidEventTap)
+        
+        Logger.shared.info("TextInputService: Cmd+V simulated")
+        return true
     }
     
     private func insertTextViaAccessibility(_ text: String) -> Bool {
         let systemWideElement = AXUIElementCreateSystemWide()
         var focusedElement: CFTypeRef?
         
-        let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute, &focusedElement)
+        let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
         
         guard result == .success, let element = focusedElement else {
             print("Failed to get focused UI element")
@@ -51,7 +105,7 @@ class TextInputService {
         
         // Try to set the value directly
         let textValue = text as CFString
-        let setResult = AXUIElementSetAttributeValue(axElement, kAXValueAttribute, textValue)
+        let setResult = AXUIElementSetAttributeValue(axElement, kAXValueAttribute as CFString, textValue)
         
         if setResult == .success {
             print("Successfully inserted text via AX value attribute")
@@ -60,12 +114,12 @@ class TextInputService {
         
         // If setting value directly fails, try to get current value and append
         var currentValue: CFTypeRef?
-        let getCurrentResult = AXUIElementCopyAttributeValue(axElement, kAXValueAttribute, &currentValue)
+        let getCurrentResult = AXUIElementCopyAttributeValue(axElement, kAXValueAttribute as CFString, &currentValue)
         
         if getCurrentResult == .success, let current = currentValue as? String {
             let newValue = current + text
             let newTextValue = newValue as CFString
-            let appendResult = AXUIElementSetAttributeValue(axElement, kAXValueAttribute, newTextValue)
+            let appendResult = AXUIElementSetAttributeValue(axElement, kAXValueAttribute as CFString, newTextValue)
             
             if appendResult == .success {
                 print("Successfully appended text via AX value attribute")

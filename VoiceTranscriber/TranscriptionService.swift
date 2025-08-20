@@ -11,17 +11,125 @@ class TranscriptionService: ObservableObject {
     @Published var isProcessing = false
     
     init() {
-        startPythonServer()
+        if ensurePythonEnvironment() {
+            startPythonServer()
+        } else {
+            Logger.shared.error("Failed to set up Python environment")
+        }
+    }
+    
+    private func ensurePythonEnvironment() -> Bool {
+        let bundlePath = Bundle.main.bundlePath
+        let projectRoot = "\(bundlePath)/../.."
+        let venvPath = "\(projectRoot)/.venv"
+        let requirementsPath = "\(projectRoot)/requirements.txt"
+        
+        Logger.shared.info("Checking Python environment at: \(venvPath)")
+        
+        // Check if .venv exists
+        if !FileManager.default.fileExists(atPath: venvPath) {
+            Logger.shared.info("Python environment not found, creating with uv...")
+            return setupPythonEnvironment(projectRoot: projectRoot, venvPath: venvPath, requirementsPath: requirementsPath)
+        } else {
+            // Check if parakeet-mlx is installed
+            let testImport = Process()
+            testImport.executableURL = URL(fileURLWithPath: "\(venvPath)/bin/python")
+            testImport.arguments = ["-c", "import parakeet_mlx"]
+            
+            do {
+                try testImport.run()
+                testImport.waitUntilExit()
+                
+                if testImport.terminationStatus != 0 {
+                    Logger.shared.info("Python environment exists but parakeet-mlx not installed, installing dependencies...")
+                    return installPythonDependencies(projectRoot: projectRoot, requirementsPath: requirementsPath)
+                } else {
+                    Logger.shared.info("Python environment ready")
+                    return true
+                }
+            } catch {
+                Logger.shared.error("Failed to check Python environment: \(error)")
+                return setupPythonEnvironment(projectRoot: projectRoot, venvPath: venvPath, requirementsPath: requirementsPath)
+            }
+        }
+    }
+    
+    private func setupPythonEnvironment(projectRoot: String, venvPath: String, requirementsPath: String) -> Bool {
+        Logger.shared.info("Setting up Python environment with uv...")
+        
+        // Create .venv with Python 3.10
+        let createVenv = Process()
+        createVenv.launchPath = findUvPath()
+        createVenv.arguments = ["venv", "--python", "3.10"]
+        createVenv.currentDirectoryPath = projectRoot
+        
+        do {
+            try createVenv.run()
+            createVenv.waitUntilExit()
+            
+            if createVenv.terminationStatus == 0 {
+                Logger.shared.info("Virtual environment created successfully")
+                return installPythonDependencies(projectRoot: projectRoot, requirementsPath: requirementsPath)
+            } else {
+                Logger.shared.error("Failed to create virtual environment")
+                return false
+            }
+        } catch {
+            Logger.shared.error("Failed to run uv venv: \(error)")
+            return false
+        }
+    }
+    
+    private func installPythonDependencies(projectRoot: String, requirementsPath: String) -> Bool {
+        Logger.shared.info("Installing Python dependencies...")
+        
+        let installDeps = Process()
+        installDeps.launchPath = "/bin/bash"
+        installDeps.arguments = ["-c", "cd \(projectRoot) && source .venv/bin/activate && \(findUvPath()) pip install -r requirements.txt"]
+        
+        do {
+            try installDeps.run()
+            installDeps.waitUntilExit()
+            
+            if installDeps.terminationStatus == 0 {
+                Logger.shared.info("Python dependencies installed successfully")
+                return true
+            } else {
+                Logger.shared.error("Failed to install Python dependencies")
+                return false
+            }
+        } catch {
+            Logger.shared.error("Failed to run uv pip install: \(error)")
+            return false
+        }
+    }
+    
+    private func findUvPath() -> String {
+        // Common uv installation paths
+        let uvPaths = [
+            "/Users/\(NSUserName())/.local/bin/uv",  // User installation
+            "/opt/homebrew/bin/uv",                  // Homebrew (Apple Silicon)
+            "/usr/local/bin/uv",                     // Homebrew (Intel)
+            "/usr/bin/uv"                           // System installation
+        ]
+        
+        for path in uvPaths {
+            if FileManager.default.fileExists(atPath: path) {
+                Logger.shared.info("Found uv at: \(path)")
+                return path
+            }
+        }
+        
+        Logger.shared.warn("uv not found in common paths, using default")
+        return "uv"  // Hope it's in PATH
     }
     
     private func startPythonServer() {
         // Find the Python script path relative to the app bundle
-        guard let bundlePath = Bundle.main.bundlePath else {
-            print("Failed to get bundle path")
-            return
-        }
+        let bundlePath = Bundle.main.bundlePath
         
-        let pythonScriptPath = "\(bundlePath)/../../../python/transcription_server.py"
+        // For development builds, go back to voice-transcriber directory
+        let pythonScriptPath = "\(bundlePath)/../../python/transcription_server.py"
         
         // Create pipes for communication
         inputPipe = Pipe()
@@ -29,28 +137,44 @@ class TranscriptionService: ObservableObject {
         
         // Set up the process - use the virtual environment Python directly
         pythonProcess = Process()
-        let venvPythonPath = "\(bundlePath)/../../../.venv/bin/python"
+        let venvPythonPath = "\(bundlePath)/../../.venv/bin/python"
         pythonProcess?.executableURL = URL(fileURLWithPath: venvPythonPath)
         pythonProcess?.arguments = [pythonScriptPath]
         pythonProcess?.standardInput = inputPipe
         pythonProcess?.standardOutput = outputPipe
         
-        // Set up working directory to the project root
-        let projectRoot = "\(bundlePath)/../../.."
+        // Set up working directory to the voice-transcriber directory
+        let projectRoot = "\(bundlePath)/../.."
         pythonProcess?.currentDirectoryURL = URL(fileURLWithPath: projectRoot)
+        
+        // Set up environment with Homebrew paths for FFmpeg
+        var environment = ProcessInfo.processInfo.environment
+        let homebrewPaths = "/opt/homebrew/bin:/usr/local/bin"
+        if let currentPath = environment["PATH"] {
+            environment["PATH"] = "\(homebrewPaths):\(currentPath)"
+        } else {
+            environment["PATH"] = "\(homebrewPaths):/usr/bin:/bin"
+        }
+        pythonProcess?.environment = environment
+        
+        // Debug logging
+        Logger.shared.info("Bundle path: \(bundlePath)")
+        Logger.shared.info("Python script path: \(pythonScriptPath)")
+        Logger.shared.info("Python executable path: \(venvPythonPath)")
+        Logger.shared.info("Working directory: \(projectRoot)")
         
         // Start monitoring output
         setupOutputMonitoring()
         
         do {
             try pythonProcess?.run()
-            print("Python transcription server started")
+            Logger.shared.info("Python transcription server started successfully")
             
             // Send ping to verify connection
             sendCommand(["action": "ping"])
             
         } catch {
-            print("Failed to start Python server: \(error)")
+            Logger.shared.error("Failed to start Python server: \(error)")
         }
     }
     
@@ -67,16 +191,18 @@ class TranscriptionService: ObservableObject {
     }
     
     private func handlePythonOutput(_ output: String) {
+        Logger.shared.info("Python output received: \(output)")
         let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
         
         for line in lines {
             do {
                 let json = try JSONSerialization.jsonObject(with: line.data(using: .utf8)!, options: [])
                 if let response = json as? [String: Any] {
+                    Logger.shared.info("Parsed JSON response: \(response)")
                     handlePythonResponse(response)
                 }
             } catch {
-                print("Failed to parse JSON response: \(line)")
+                Logger.shared.error("Failed to parse JSON response: \(line)")
             }
         }
     }

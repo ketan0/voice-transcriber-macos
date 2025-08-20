@@ -3,41 +3,29 @@ import Foundation
 
 class AudioRecorder: NSObject, ObservableObject {
     private var audioRecorder: AVAudioRecorder?
-    private var recordingSession: AVAudioSession?
     private var recordingURL: URL?
     
     var onRecordingStateChanged: ((Bool) -> Void)?
     
     @Published var isRecording = false
-    @Published var hasPermission = false
+    @Published var hasPermission = true // macOS handles permissions differently
     
     override init() {
         super.init()
-        setupAudioSession()
         checkPermissions()
     }
     
-    private func setupAudioSession() {
-        recordingSession = AVAudioSession.sharedInstance()
-        
-        do {
-            try recordingSession?.setCategory(.record, mode: .default)
-            try recordingSession?.setActive(true)
-        } catch {
-            print("Failed to set up recording session: \(error)")
-        }
-    }
-    
     private func checkPermissions() {
-        switch AVAudioSession.sharedInstance().recordPermission {
-        case .granted:
+        // On macOS, check microphone permission using AVCaptureDevice
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
             hasPermission = true
-        case .denied:
+        case .denied, .restricted:
             hasPermission = false
-        case .undetermined:
-            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] allowed in
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
                 DispatchQueue.main.async {
-                    self?.hasPermission = allowed
+                    self?.hasPermission = granted
                 }
             }
         @unknown default:
@@ -46,13 +34,14 @@ class AudioRecorder: NSObject, ObservableObject {
     }
     
     func startRecording() {
+        Logger.shared.info("AudioRecorder: startRecording called")
         guard hasPermission else {
-            print("Recording permission not granted")
+            Logger.shared.error("AudioRecorder: Recording permission not granted")
             return
         }
         
         guard !isRecording else {
-            print("Already recording")
+            Logger.shared.warn("AudioRecorder: Already recording")
             return
         }
         
@@ -76,32 +65,37 @@ class AudioRecorder: NSObject, ObservableObject {
         ] as [String: Any]
         
         do {
+            Logger.shared.info("AudioRecorder: Creating AVAudioRecorder with settings")
             audioRecorder = try AVAudioRecorder(url: url, settings: settings)
             audioRecorder?.delegate = self
             audioRecorder?.isMeteringEnabled = true
+            
+            Logger.shared.info("AudioRecorder: Starting recording")
             audioRecorder?.record()
             
             isRecording = true
             onRecordingStateChanged?(true)
             
-            print("Started recording to: \(url.path)")
+            Logger.shared.info("AudioRecorder: Recording started successfully to: \(url.path)")
         } catch {
-            print("Failed to start recording: \(error)")
+            Logger.shared.error("AudioRecorder: Failed to start recording: \(error)")
         }
     }
     
     func stopRecording() -> String? {
+        Logger.shared.info("AudioRecorder: stopRecording called")
         guard isRecording, let recorder = audioRecorder else {
-            print("Not currently recording")
+            Logger.shared.warn("AudioRecorder: Not currently recording")
             return nil
         }
         
+        Logger.shared.info("AudioRecorder: Stopping recording")
         recorder.stop()
         isRecording = false
         onRecordingStateChanged?(false)
         
         let recordingPath = recordingURL?.path
-        print("Stopped recording. File saved to: \(recordingPath ?? "unknown")")
+        Logger.shared.info("AudioRecorder: Recording stopped. File saved to: \(recordingPath ?? "unknown")")
         
         return recordingPath
     }

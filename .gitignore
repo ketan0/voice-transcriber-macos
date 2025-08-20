@@ -1,0 +1,40 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Swift/Xcode
+.DS_Store
+*.swp
+*.tmp
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Build products
+VoiceTranscriber/VoiceTranscriber
+VoiceTranscriber/VoiceTranscriber.app/Contents/MacOS/VoiceTranscriber
+
+# Logs
+*.log
+/tmp/
+
+# uv
+uv.lock
+
+# Model files (large)
+*.bin
+*.safetensors
+
+# Audio files
+*.wav
+*.mp3
+*.aac
+
+# Temporary files
+*.tmp
+*.temp
