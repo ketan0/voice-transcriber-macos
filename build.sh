@@ -84,6 +84,11 @@ swiftc -o VoiceTranscriber *.swift \
 cp VoiceTranscriber ../VoiceTranscriber.app/Contents/MacOS/
 cd ..
 
+# Copy requirements.txt and Python files to app bundle
+echo "📦 Copying Python files to app bundle..."
+cp requirements.txt VoiceTranscriber.app/Contents/
+cp -r python VoiceTranscriber.app/Contents/
+
 echo "✅ Build completed successfully!"
 echo ""
 echo "🚀 To run the app:"

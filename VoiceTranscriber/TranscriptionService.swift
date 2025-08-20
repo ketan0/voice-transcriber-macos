@@ -20,16 +20,16 @@ class TranscriptionService: ObservableObject {
     
     private func ensurePythonEnvironment() -> Bool {
         let bundlePath = Bundle.main.bundlePath
-        let projectRoot = "\(bundlePath)/../.."
-        let venvPath = "\(projectRoot)/.venv"
-        let requirementsPath = "\(projectRoot)/requirements.txt"
+        let appContentsPath = "\(bundlePath)/Contents"
+        let venvPath = "\(appContentsPath)/.venv"
+        let requirementsPath = "\(appContentsPath)/requirements.txt"
         
         Logger.shared.info("Checking Python environment at: \(venvPath)")
         
         // Check if .venv exists
         if !FileManager.default.fileExists(atPath: venvPath) {
             Logger.shared.info("Python environment not found, creating with uv...")
-            return setupPythonEnvironment(projectRoot: projectRoot, venvPath: venvPath, requirementsPath: requirementsPath)
+            return setupPythonEnvironment(projectRoot: appContentsPath, venvPath: venvPath, requirementsPath: requirementsPath)
         } else {
             // Check if parakeet-mlx is installed
             let testImport = Process()
@@ -42,36 +42,62 @@ class TranscriptionService: ObservableObject {
                 
                 if testImport.terminationStatus != 0 {
                     Logger.shared.info("Python environment exists but parakeet-mlx not installed, installing dependencies...")
-                    return installPythonDependencies(projectRoot: projectRoot, requirementsPath: requirementsPath)
+                    return installPythonDependencies(projectRoot: appContentsPath, requirementsPath: requirementsPath)
                 } else {
                     Logger.shared.info("Python environment ready")
                     return true
                 }
             } catch {
                 Logger.shared.error("Failed to check Python environment: \(error)")
-                return setupPythonEnvironment(projectRoot: projectRoot, venvPath: venvPath, requirementsPath: requirementsPath)
+                return setupPythonEnvironment(projectRoot: appContentsPath, venvPath: venvPath, requirementsPath: requirementsPath)
             }
         }
     }
     
     private func setupPythonEnvironment(projectRoot: String, venvPath: String, requirementsPath: String) -> Bool {
         Logger.shared.info("Setting up Python environment with uv...")
+        Logger.shared.info("Project root: \(projectRoot)")
+        Logger.shared.info("Venv path: \(venvPath)")
+        Logger.shared.info("Requirements path: \(requirementsPath)")
         
         // Create .venv with Python 3.10
         let createVenv = Process()
-        createVenv.launchPath = findUvPath()
-        createVenv.arguments = ["venv", "--python", "3.10"]
+        let uvPath = findUvPath()
+        createVenv.launchPath = uvPath
+        createVenv.arguments = ["venv", "--python", "3.10", ".venv"]
         createVenv.currentDirectoryPath = projectRoot
+        
+        Logger.shared.info("Running command: \(uvPath) venv --python 3.10 .venv")
+        Logger.shared.info("Working directory: \(projectRoot)")
+        
+        // Capture stdout and stderr
+        let stdout = Pipe()
+        let stderr = Pipe()
+        createVenv.standardOutput = stdout
+        createVenv.standardError = stderr
         
         do {
             try createVenv.run()
             createVenv.waitUntilExit()
             
+            // Read stdout and stderr
+            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            
+            if let stdoutString = String(data: stdoutData, encoding: .utf8), !stdoutString.isEmpty {
+                Logger.shared.info("uv venv stdout: \(stdoutString)")
+            }
+            if let stderrString = String(data: stderrData, encoding: .utf8), !stderrString.isEmpty {
+                Logger.shared.info("uv venv stderr: \(stderrString)")
+            }
+            
+            Logger.shared.info("uv venv exit code: \(createVenv.terminationStatus)")
+            
             if createVenv.terminationStatus == 0 {
                 Logger.shared.info("Virtual environment created successfully")
                 return installPythonDependencies(projectRoot: projectRoot, requirementsPath: requirementsPath)
             } else {
-                Logger.shared.error("Failed to create virtual environment")
+                Logger.shared.error("Failed to create virtual environment, exit code: \(createVenv.terminationStatus)")
                 return false
             }
         } catch {
@@ -85,17 +111,40 @@ class TranscriptionService: ObservableObject {
         
         let installDeps = Process()
         installDeps.launchPath = "/bin/bash"
-        installDeps.arguments = ["-c", "cd \(projectRoot) && source .venv/bin/activate && \(findUvPath()) pip install -r requirements.txt"]
+        let uvPath = findUvPath()
+        let command = "cd \(projectRoot) && source .venv/bin/activate && \(uvPath) pip install -r requirements.txt"
+        installDeps.arguments = ["-c", command]
+        
+        Logger.shared.info("Running pip install command: \(command)")
+        
+        // Capture stdout and stderr
+        let stdout = Pipe()
+        let stderr = Pipe()
+        installDeps.standardOutput = stdout
+        installDeps.standardError = stderr
         
         do {
             try installDeps.run()
             installDeps.waitUntilExit()
             
+            // Read stdout and stderr
+            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            
+            if let stdoutString = String(data: stdoutData, encoding: .utf8), !stdoutString.isEmpty {
+                Logger.shared.info("pip install stdout: \(stdoutString)")
+            }
+            if let stderrString = String(data: stderrData, encoding: .utf8), !stderrString.isEmpty {
+                Logger.shared.info("pip install stderr: \(stderrString)")
+            }
+            
+            Logger.shared.info("pip install exit code: \(installDeps.terminationStatus)")
+            
             if installDeps.terminationStatus == 0 {
                 Logger.shared.info("Python dependencies installed successfully")
                 return true
             } else {
-                Logger.shared.error("Failed to install Python dependencies")
+                Logger.shared.error("Failed to install Python dependencies, exit code: \(installDeps.terminationStatus)")
                 return false
             }
         } catch {
@@ -129,7 +178,7 @@ class TranscriptionService: ObservableObject {
         let bundlePath = Bundle.main.bundlePath
         
         // For development builds, go back to voice-transcriber directory
-        let pythonScriptPath = "\(bundlePath)/../../python/transcription_server.py"
+        let pythonScriptPath = "\(bundlePath)/Contents/python/transcription_server.py"
         
         // Create pipes for communication
         inputPipe = Pipe()
@@ -137,15 +186,15 @@ class TranscriptionService: ObservableObject {
         
         // Set up the process - use the virtual environment Python directly
         pythonProcess = Process()
-        let venvPythonPath = "\(bundlePath)/../../.venv/bin/python"
+        let venvPythonPath = "\(bundlePath)/Contents/.venv/bin/python"
         pythonProcess?.executableURL = URL(fileURLWithPath: venvPythonPath)
         pythonProcess?.arguments = [pythonScriptPath]
         pythonProcess?.standardInput = inputPipe
         pythonProcess?.standardOutput = outputPipe
         
-        // Set up working directory to the voice-transcriber directory
-        let projectRoot = "\(bundlePath)/../.."
-        pythonProcess?.currentDirectoryURL = URL(fileURLWithPath: projectRoot)
+        // Set up working directory to the app Contents directory
+        let appContentsPath = "\(bundlePath)/Contents"
+        pythonProcess?.currentDirectoryURL = URL(fileURLWithPath: appContentsPath)
         
         // Set up environment with Homebrew paths for FFmpeg
         var environment = ProcessInfo.processInfo.environment
@@ -161,7 +210,7 @@ class TranscriptionService: ObservableObject {
         Logger.shared.info("Bundle path: \(bundlePath)")
         Logger.shared.info("Python script path: \(pythonScriptPath)")
         Logger.shared.info("Python executable path: \(venvPythonPath)")
-        Logger.shared.info("Working directory: \(projectRoot)")
+        Logger.shared.info("Working directory: \(appContentsPath)")
         
         // Start monitoring output
         setupOutputMonitoring()
