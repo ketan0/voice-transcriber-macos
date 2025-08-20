@@ -27,10 +27,11 @@ class TranscriptionService: ObservableObject {
         inputPipe = Pipe()
         outputPipe = Pipe()
         
-        // Set up the process
+        // Set up the process - use the virtual environment Python directly
         pythonProcess = Process()
-        pythonProcess?.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        pythonProcess?.arguments = ["uv", "run", "python", pythonScriptPath]
+        let venvPythonPath = "\(bundlePath)/../../../.venv/bin/python"
+        pythonProcess?.executableURL = URL(fileURLWithPath: venvPythonPath)
+        pythonProcess?.arguments = [pythonScriptPath]
         pythonProcess?.standardInput = inputPipe
         pythonProcess?.standardOutput = outputPipe
         
