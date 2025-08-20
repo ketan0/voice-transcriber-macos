@@ -21,12 +21,7 @@ A real-time voice transcription app for macOS that uses Apple's MLX framework an
 
 ## Installation
 
-### Option 1: Download Release
-1. Download the latest release from the [Releases](https://github.com/ketanagrawal/voice-transcriber-macos/releases) page
-2. Move `VoiceTranscriber.app` to your Applications folder
-3. Run the app - it will automatically set up its Python environment on first launch
-
-### Option 2: Build from Source
+### Build from Source
 1. Clone this repository:
    ```bash
    git clone https://github.com/ketanagrawal/voice-transcriber-macos.git
